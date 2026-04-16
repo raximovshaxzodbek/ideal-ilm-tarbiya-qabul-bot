@@ -1,4 +1,4 @@
-const { Telegraf, Scenes, session } = require('telegraf');
+const { Telegraf, Scenes, session, Markup } = require('telegraf');
 const admin = require('firebase-admin');
 const { GoogleSpreadsheet } = require('google-spreadsheet');
 const { JWT } = require('google-auth-library');
@@ -42,40 +42,131 @@ async function saveToGoogleSheet(data) {
     }
 }
 
-// 3. Bot sahnalari (WizardScene)
+// Telefon raqam to'g'riligini tekshirish uchun Regex formula (faqat O'zbekiston raqamlari)
+const phoneRegex = /^\+?998[0-9]{9}$/;
+
 const contactScene = new Scenes.WizardScene(
     'REGISTRATION_SCENE',
+    
+    // 1-QADAM: Ism so'rash
     (ctx) => {
-        ctx.reply("Assalomu alaykum! Ismingizni kiriting:");
+        ctx.reply("👋 Assalomu alaykum! Ism va familiyangizni kiriting:\n(Masalan: Alisherov Vali)");
         ctx.wizard.state.formData = {};
         return ctx.wizard.next();
     },
+
+    // 2-QADAM: Ismni tekshirish va Raqam so'rash
     (ctx) => {
+        // Agar foydalanuvchi matn emas, rasm yoki stiker yuborsa:
+        if (!ctx.message || !ctx.message.text || ctx.message.text.length < 3) {
+            ctx.reply("❌ Iltimos, ismingizni to'g'ri harflar bilan kiriting.");
+            return; // Keyingi qadamga o'tkazmaymiz
+        }
         ctx.wizard.state.formData.ism = ctx.message.text;
-        ctx.reply("Telefon raqamingizni yuboring:");
+
+        // Raqamni tugma orqali so'rash
+        ctx.reply(
+            "📞 Iltimos, telefon raqamingizni yuboring.\nBuning uchun pastdagi **«📱 Raqamni yuborish»** tugmasini bosing:",
+            Markup.keyboard([
+                Markup.button.contactRequest("📱 Raqamni yuborish")
+            ]).oneTime().resize()
+        );
         return ctx.wizard.next();
     },
+
+    // 3-QADAM: Raqamni tekshirish va Manzil so'rash
     (ctx) => {
-        ctx.wizard.state.formData.phone = ctx.message.text;
-        ctx.reply("Manzilingizni kiriting (tuman, ko'cha):");
+        let phone = "";
+        
+        // Agar tugmani bosib yuborgan bo'lsa
+        if (ctx.message && ctx.message.contact) {
+            phone = ctx.message.contact.phone_number;
+        } 
+        // Agar qo'lda yozgan bo'lsa (regex orqali tekshiramiz)
+        else if (ctx.message && ctx.message.text) {
+            const typedPhone = ctx.message.text.replace(/\s+/g, ''); // Bo'shliqlarni olib tashlash
+            if (phoneRegex.test(typedPhone)) {
+                phone = typedPhone;
+            }
+        }
+
+        // Agar raqam xato bo'lsa
+        if (!phone) {
+            ctx.reply("❌ Noto'g'ri format! Iltimos, pastdagi tugmani bosing yoki raqamni to'g'ri kiriting (+998901234567).");
+            return;
+        }
+
+        ctx.wizard.state.formData.phone = phone;
+        
+        // Tugmalarni yo'qotib, keyingi savolni berish
+        ctx.reply("📍 Yashash manzilingizni kiriting:\n(Masalan: Beshariq tumani, Hamid Olimjon ko'chasi)", Markup.removeKeyboard());
         return ctx.wizard.next();
     },
+
+    // 4-QADAM: Manzilni saqlash va Fanlarni tugmada chiqarish
     (ctx) => {
+        if (!ctx.message || !ctx.message.text) {
+            ctx.reply("❌ Iltimos, manzilingizni matn ko'rinishida yozing.");
+            return;
+        }
         ctx.wizard.state.formData.manzil = ctx.message.text;
-        ctx.reply("Qaysi fanga qiziqasiz?");
+
+        ctx.reply(
+            "📘 Qaysi fanni o'rganmoqchisiz? Quyidagilardan birini tanlang:",
+            Markup.keyboard([
+                ["🧮 Matematika", "🇬🇧 Ingliz tili"],
+                ["💻 Informatika / IT", "🇷🇺 Rus tili"],
+                ["⚖️ Huquq", "Boshqa fan"]
+            ]).oneTime().resize()
+        );
         return ctx.wizard.next();
     },
+
+    // 5-QADAM: Fanni saqlash va Sinfni tugmada chiqarish
     (ctx) => {
+        if (!ctx.message || !ctx.message.text) {
+            ctx.reply("❌ Iltimos, tugmalardan birini tanlang yoki fanni yozing.");
+            return;
+        }
         ctx.wizard.state.formData.qiziqish = ctx.message.text;
-        ctx.reply("Sinfingizni kiriting:");
+
+        ctx.reply(
+            "🏫 Nechanchi sinfda o'qiysiz?",
+            Markup.keyboard([
+                ["1-sinf", "2-sinf", "3-sinf", "4-sinf"],
+                ["5-sinf", "6-sinf", "7-sinf", "8-sinf"],
+                ["9-sinf", "10-sinf", "11-sinf"],
+                ["Maktabni bitirganman"]
+            ]).oneTime().resize()
+        );
         return ctx.wizard.next();
     },
+
+    // 6-QADAM: Sinfni saqlash va Manbani so'rash
     (ctx) => {
+        if (!ctx.message || !ctx.message.text) {
+            ctx.reply("❌ Iltimos, tugmalardan birini tanlang.");
+            return;
+        }
         ctx.wizard.state.formData.sinf = ctx.message.text;
-        ctx.reply("Biz haqimizda qayerdan eshitdingiz?");
+
+        ctx.reply(
+            "📢 Biz haqimizda qayerdan eshitdingiz?",
+            Markup.keyboard([
+                ["📱 Instagram", "✈️ Telegram"],
+                ["🗣 Tanishlarimdan", "🏫 Maktab banneridan"]
+            ]).oneTime().resize()
+        );
         return ctx.wizard.next();
     },
+
+    // 7-QADAM: Yakunlash va Bazaga yozish
     async (ctx) => {
+        if (!ctx.message || !ctx.message.text) {
+            ctx.reply("❌ Iltimos, tugmalardan birini tanlang.");
+            return;
+        }
+        
         const data = ctx.wizard.state.formData;
         data.manba = ctx.message.text;
         data.chatId = ctx.chat.id;
@@ -85,12 +176,16 @@ const contactScene = new Scenes.WizardScene(
             // Firestore-ga saqlash
             await db.collection('leads').add(data);
             
-            // Google Sheets-ga saqlash
+            // Google Sheets-ga saqlash (Sizdagi oldingi kod)
             await saveToGoogleSheet(data);
 
-            ctx.reply("Rahmat! Ma'lumotlaringiz qabul qilindi. Tez orada bog'lanamiz.");
+            // Yakuniy xabar va tugmalarni tozalash
+            ctx.reply(
+                "✅ Rahmat! Ma'lumotlaringiz muvaffaqiyatli qabul qilindi. Tez orada administratorlarimiz siz bilan bog'lanishadi.",
+                Markup.removeKeyboard()
+            );
         } catch (err) {
-            ctx.reply("Xatolik yuz berdi, qaytadan urinib ko'ring.");
+            ctx.reply("❌ Xatolik yuz berdi, tizimda muammo. Iltimos keyinroq qaytadan urinib ko'ring.", Markup.removeKeyboard());
             console.error(err);
         }
         return ctx.scene.leave();
