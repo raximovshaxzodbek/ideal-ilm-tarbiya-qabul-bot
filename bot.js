@@ -164,26 +164,6 @@ const contactScene = new Scenes.WizardScene(
 const commentScene = new Scenes.WizardScene(
     'COMMENT_SCENE',
     (ctx) => {
-        ctx.reply("✍️ Savolingiz yoki qo'shimcha fikringizni yozib qoldiring:");
-        return ctx.wizard.next();
-    },
-    async (ctx) => {
-        if (ctx.message?.text === '/start') return ctx.scene.enter('REGISTRATION_SCENE');
-        const text = ctx.message.text;
-        await db.collection('comments').add({
-            chatId: ctx.chat.id,
-            text: text,
-            date: new Date()
-        });
-        ctx.reply("✅ Savolingiz yuborildi. Rahmat siz bilan tez orada bog'lanamiz!");
-        return ctx.scene.leave();
-    }
-);
-
-// QO'SHIMCHA SAVOL (COMMENT) SCENASI
-const commentScene = new Scenes.WizardScene(
-    'COMMENT_SCENE',
-    (ctx) => {
         ctx.reply("✍️ Savolingiz yoki qo'shimcha fikringizni yozib qoldiring:\n(Bekor qilish uchun /start bosing)");
         return ctx.wizard.next();
     },
@@ -223,6 +203,7 @@ const commentScene = new Scenes.WizardScene(
         return ctx.scene.leave();
     }
 );
+
 
 const bot = new Telegraf('8660010731:AAEjuLzqQHxJYnNytZCNMM-3jS8oOtNFq3c');
 const stage = new Scenes.Stage([contactScene, commentScene]);
