@@ -65,7 +65,7 @@ const contactScene = new Scenes.WizardScene(
         ctx.wizard.state.formData.ism = ctx.message.text;
 
         ctx.reply(
-            "📞 Iltimos, telefon raqamingizni yuboring.\nBuning uchun pastdagi **«📱 Raqamni yuborish»** tugmasini bosing:",
+            "📞 Iltimos, telefon raqamingizni yuboring.\nBuning uchun pastdagi «📱 Raqamni yuborish» tugmasini bosing yoki nomeringizni yozib qoldiring. \n Masalan: +998901234567",
             Markup.keyboard([
                 Markup.button.contactRequest("📱 Raqamni yuborish")
             ]).oneTime().resize()
@@ -85,7 +85,7 @@ const contactScene = new Scenes.WizardScene(
         }
 
         if (!phone) {
-            ctx.reply("❌ Noto'g'ri format! Iltimos, pastdagi tugmani bosing yoki raqamni to'g'ri kiriting.");
+            ctx.reply("❌ Noto'g'ri format! Iltimos, pastdagi tugmani bosing yoki raqamni to'g'ri kiriting.\n Masalan: +998901234567");
             return;
         }
 
@@ -175,7 +175,51 @@ const commentScene = new Scenes.WizardScene(
             text: text,
             date: new Date()
         });
-        ctx.reply("✅ Savolingiz yuborildi. Rahmat!");
+        ctx.reply("✅ Savolingiz yuborildi. Rahmat siz bilan tez orada bog'lanamiz!");
+        return ctx.scene.leave();
+    }
+);
+
+// QO'SHIMCHA SAVOL (COMMENT) SCENASI
+const commentScene = new Scenes.WizardScene(
+    'COMMENT_SCENE',
+    (ctx) => {
+        ctx.reply("✍️ Savolingiz yoki qo'shimcha fikringizni yozib qoldiring:\n(Bekor qilish uchun /start bosing)");
+        return ctx.wizard.next();
+    },
+    async (ctx) => {
+        if (ctx.message?.text === '/start') return ctx.scene.enter('REGISTRATION_SCENE');
+        
+        const commentText = ctx.message.text;
+        const commentData = {
+            chatId: ctx.chat.id,
+            ism: ctx.from.first_name || "Noma'lum", // Telegramdagi ismi
+            izoh: commentText,
+            manba: "Bot Comment bo'limi",
+            createdAt: admin.firestore.FieldValue.serverTimestamp()
+        };
+
+        try {
+            // 1. Firebase-ga saqlash
+            await db.collection('comments').add(commentData);
+            
+            // 2. Google Sheets-ga saqlash
+            // saveToGoogleSheet funksiyasi mavjud ustunlarga moslab yozadi
+            await saveToGoogleSheet({
+                ism: commentData.ism,
+                izoh: commentData.izoh,
+                manba: commentData.manba,
+                phone: "Faqat savol", // Telefon so'ralmagani uchun
+                manzil: "-",
+                qiziqish: "-",
+                sinf: "-"
+            });
+
+            ctx.reply("✅ Savolingiz va taklifingiz qabul qilindi. Tez orada javob beramiz! Rahmat.");
+        } catch (err) {
+            console.error("Comment saqlashda xato:", err);
+            ctx.reply("❌ Xatolik yuz berdi, keyinroq urinib ko'ring.");
+        }
         return ctx.scene.leave();
     }
 );
