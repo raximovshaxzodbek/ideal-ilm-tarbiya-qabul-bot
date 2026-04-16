@@ -18,6 +18,9 @@ const auth = new JWT({
     scopes: ['https://www.googleapis.com/auth/spreadsheets'],
 });
 
+const http = require('http');
+http.createServer((req, res) => res.end('Bot is running!')).listen(process.env.PORT || 3000);
+
 async function saveToGoogleSheet(data) {
     try {
         const doc = new GoogleSpreadsheet(SPREADSHEET_ID, auth);
