@@ -11,24 +11,15 @@ admin.initializeApp({
 const db = admin.firestore();
 
 // 2. Google Sheets ulanishi sozlamalari
-const SPREADSHEET_ID = '1lXdNvA91QaYG4pAhvtSZgSrlO-VywlhkKVqH3nikiUw';
 const auth = new JWT({
     email: serviceAccount.client_email,
     key: serviceAccount.private_key,
     scopes: ['https://www.googleapis.com/auth/spreadsheets'],
 });
 
-const http = require('http');
-const PORT = process.env.PORT || 10000;
-
-http.createServer((req, res) => {
-    res.writeHead(200);
-    res.end('Bot is alive!');
-}).listen(PORT, '0.0.0.0');
-
 async function saveToGoogleSheet(data) {
     try {
-        const doc = new GoogleSpreadsheet(SPREADSHEET_ID, auth);
+        const doc = new GoogleSpreadsheet(serviceAccount.spreadsheet_id, auth);
         await doc.loadInfo();
         const sheet = doc.sheetsByIndex[0];
         
@@ -210,8 +201,26 @@ const commentScene = new Scenes.WizardScene(
 );
 
 
-const bot = new Telegraf('8660010731:AAEjuLzqQHxJYnNytZCNMM-3jS8oOtNFq3c');
+const bot = new Telegraf(serviceAccount.bot_token);
 const stage = new Scenes.Stage([contactScene, commentScene]);
+const WEBHOOK_DOMAIN = 'https://ideal-bot-qqbc.onrender.com/';
+bot.telegram.setWebhook(`${WEBHOOK_DOMAIN}/bot`);
+
+const express = require('express');
+const app = express();
+
+app.use(express.json());
+app.post('/bot', (req, res) => {
+    bot.handleUpdate(req.body, res);
+});
+
+app.get('/', (req, res) => {
+    res.send('Bot ishlayapti ✅');
+});
+
+app.listen(PORT, () => {
+    console.log(`Server running on ${PORT}`);
+});
 
 bot.use(session());
 bot.use(stage.middleware());
