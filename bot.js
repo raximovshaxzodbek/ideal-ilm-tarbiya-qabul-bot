@@ -291,6 +291,7 @@ const commentScene = new Scenes.WizardScene(
 const BOT_TOKEN = process.env.BOT_TOKEN || serviceAccount.bot_token;
 const PORT = Number(process.env.PORT) || 10000;
 const WEBHOOK_DOMAIN = process.env.WEBHOOK_DOMAIN?.trim();
+const BOT_MODE = process.env.BOT_MODE?.trim().toLowerCase();
 
 if (!BOT_TOKEN) {
   throw new Error("Bot token topilmadi. BOT_TOKEN yoki serviceAccount.bot_token kerak.");
@@ -329,7 +330,13 @@ async function startBot() {
     console.error("Google Sheets ulanishida xatolik:", error);
   }
 
-  if (WEBHOOK_DOMAIN) {
+  const useWebhook = BOT_MODE === "webhook" || Boolean(WEBHOOK_DOMAIN);
+
+  if (useWebhook) {
+    if (!WEBHOOK_DOMAIN) {
+      throw new Error("BOT_MODE=webhook bo'lsa, WEBHOOK_DOMAIN ham kerak.");
+    }
+
     app.post("/bot", (req, res) => {
       bot.handleUpdate(req.body, res);
     });
@@ -359,6 +366,11 @@ async function startBot() {
 }
 
 startBot().catch((error) => {
+  if (error?.response?.error_code === 409) {
+    console.error(
+      "409 conflict: bir xil bot token bilan boshqa joyda ham polling ishlayapti. Bitta instance qoldiring yoki Render'da webhook ishlating.",
+    );
+  }
   console.error("Botni ishga tushirishda xatolik:", error);
   process.exit(1);
 });
