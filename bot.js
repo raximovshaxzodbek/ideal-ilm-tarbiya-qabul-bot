@@ -3,7 +3,36 @@ const admin = require("firebase-admin");
 const { GoogleSpreadsheet } = require("google-spreadsheet");
 const { JWT } = require("google-auth-library");
 const express = require("express");
-const serviceAccount = require("./serviceAccountKey.json");
+const fs = require("fs");
+const path = require("path");
+
+function loadServiceAccount() {
+  if (process.env.SERVICE_ACCOUNT_JSON) {
+    try {
+      const parsed = JSON.parse(process.env.SERVICE_ACCOUNT_JSON);
+      if (parsed.private_key) {
+        parsed.private_key = parsed.private_key.replace(/\\n/g, "\n");
+      }
+      parsed._source = "env";
+      return parsed;
+    } catch (error) {
+      throw new Error(`SERVICE_ACCOUNT_JSON noto'g'ri JSON: ${error.message}`);
+    }
+  }
+
+  const serviceAccountPath = path.join(__dirname, "serviceAccountKey.json");
+  if (!fs.existsSync(serviceAccountPath)) {
+    throw new Error(
+      "Service account topilmadi. SERVICE_ACCOUNT_JSON env yoki serviceAccountKey.json kerak.",
+    );
+  }
+
+  const parsed = require(serviceAccountPath);
+  parsed._source = "file";
+  return parsed;
+}
+
+const serviceAccount = loadServiceAccount();
 
 if (!admin.apps.length) {
   admin.initializeApp({
@@ -290,6 +319,8 @@ async function startBot() {
   app.get("/", (_req, res) => {
     res.send("Bot is running...");
   });
+
+  console.log(`Service account manbasi: ${serviceAccount._source}`);
 
   try {
     const sheet = await getGoogleSheet();
