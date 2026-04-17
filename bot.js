@@ -19,7 +19,12 @@ const auth = new JWT({
 });
 
 const http = require('http');
-http.createServer((req, res) => res.end('Bot is running!')).listen(process.env.PORT || 3000);
+const PORT = process.env.PORT || 10000;
+
+http.createServer((req, res) => {
+    res.writeHead(200);
+    res.end('Bot is alive!');
+}).listen(PORT, '0.0.0.0');
 
 async function saveToGoogleSheet(data) {
     try {
