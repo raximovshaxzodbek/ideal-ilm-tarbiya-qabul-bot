@@ -55,24 +55,19 @@ async function getGoogleSheet() {
 }
 
 async function saveToGoogleSheet(data) {
-  try {
-    const sheet = await getGoogleSheet();
+  const sheet = await getGoogleSheet();
 
-    await sheet.addRow({
-      ism: data.ism,
-      izoh: data.izoh || "Yo'q",
-      manba: data.manba,
-      manzil: data.manzil,
-      phone: data.phone,
-      qiziqish: data.qiziqish,
-      sinf: data.sinf,
-    });
+  await sheet.addRow({
+    ism: data.ism,
+    izoh: data.izoh || "Yo'q",
+    manba: data.manba,
+    manzil: data.manzil,
+    phone: data.phone,
+    qiziqish: data.qiziqish,
+    sinf: data.sinf,
+  });
 
-    console.log("Google Sheets-ga yozildi");
-  } catch (error) {
-    console.error("Sheets xatosi:", error);
-    throw error;
-  }
+  console.log("Google Sheets-ga yozildi");
 }
 
 const phoneRegex = /^\+?998[0-9]{9}$/;
@@ -231,11 +226,14 @@ const contactScene = new Scenes.WizardScene(
 
     try {
       await db.collection("leads").add(data);
-      await saveToGoogleSheet(data);
       await ctx.reply(
         "Rahmat! Ma'lumotlaringiz qabul qilindi.",
         Markup.removeKeyboard(),
       );
+
+      saveToGoogleSheet(data).catch((error) => {
+        console.error("Sheets xatosi:", error);
+      });
     } catch (error) {
       console.error("Leads saqlashda xatolik:", error);
       await ctx.reply("Xatolik yuz berdi. Iltimos, qayta urinib ko'ring.");
@@ -271,14 +269,17 @@ const commentScene = new Scenes.WizardScene(
 
     try {
       await db.collection("comments").add(commentData);
-      await saveToGoogleSheet({
+      await ctx.reply("Savolingiz qabul qilindi.");
+
+      saveToGoogleSheet({
         ...commentData,
         phone: "-",
         manzil: "-",
         qiziqish: "-",
         sinf: "-",
+      }).catch((error) => {
+        console.error("Sheets xatosi:", error);
       });
-      await ctx.reply("Savolingiz qabul qilindi.");
     } catch (error) {
       console.error("Comment saqlashda xatolik:", error);
       await ctx.reply("Xatolik yuz berdi.");
@@ -292,6 +293,7 @@ const BOT_TOKEN = process.env.BOT_TOKEN || serviceAccount.bot_token;
 const PORT = Number(process.env.PORT) || 10000;
 const WEBHOOK_DOMAIN = process.env.WEBHOOK_DOMAIN?.trim();
 const BOT_MODE = process.env.BOT_MODE?.trim().toLowerCase();
+const ADMIN_PANEL_PASSWORD = process.env.ADMIN_PANEL_PASSWORD?.trim();
 
 if (!BOT_TOKEN) {
   throw new Error("Bot token topilmadi. BOT_TOKEN yoki serviceAccount.bot_token kerak.");
@@ -300,6 +302,248 @@ if (!BOT_TOKEN) {
 const bot = new Telegraf(BOT_TOKEN);
 const stage = new Scenes.Stage([contactScene, commentScene]);
 const app = express();
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function formatDate(value) {
+  if (!value) return "-";
+  try {
+    if (typeof value.toDate === "function") {
+      return value.toDate().toLocaleString("uz-UZ");
+    }
+    return new Date(value).toLocaleString("uz-UZ");
+  } catch (_error) {
+    return "-";
+  }
+}
+
+function renderTableRows(items, fields) {
+  if (!items.length) {
+    return `<tr><td colspan="${fields.length}">Ma'lumot topilmadi</td></tr>`;
+  }
+
+  return items
+    .map((item) => {
+      const data = item.data();
+      return `<tr>${fields
+        .map((field) => `<td>${escapeHtml(field.format(data[field.key]))}</td>`)
+        .join("")}</tr>`;
+    })
+    .join("");
+}
+
+function renderAdminPage(leads, comments) {
+  const leadFields = [
+    { key: "ism", label: "Ism", format: (v) => v || "-" },
+    { key: "phone", label: "Telefon", format: (v) => v || "-" },
+    { key: "manzil", label: "Manzil", format: (v) => v || "-" },
+    { key: "qiziqish", label: "Qiziqish", format: (v) => v || "-" },
+    { key: "sinf", label: "Sinf", format: (v) => v || "-" },
+    { key: "manba", label: "Manba", format: (v) => v || "-" },
+    { key: "createdAt", label: "Sana", format: formatDate },
+  ];
+
+  const commentFields = [
+    { key: "ism", label: "Ism", format: (v) => v || "-" },
+    { key: "izoh", label: "Izoh", format: (v) => v || "-" },
+    { key: "manba", label: "Manba", format: (v) => v || "-" },
+    { key: "createdAt", label: "Sana", format: formatDate },
+  ];
+
+  return `<!DOCTYPE html>
+<html lang="uz">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Ideal Bot Admin Panel</title>
+  <style>
+    :root {
+      --bg: #f6f1e8;
+      --card: #fffaf2;
+      --line: #e3d6bf;
+      --text: #1d2a35;
+      --muted: #6e7781;
+      --accent: #1f6f78;
+      --accent-2: #f2a65a;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Georgia, "Trebuchet MS", serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top left, rgba(242,166,90,.20), transparent 28%),
+        linear-gradient(180deg, #f8f3ea 0%, var(--bg) 100%);
+    }
+    .wrap {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+    .hero {
+      background: linear-gradient(135deg, rgba(31,111,120,.95), rgba(16,51,58,.95));
+      color: white;
+      border-radius: 24px;
+      padding: 28px;
+      box-shadow: 0 18px 40px rgba(29,42,53,.18);
+      margin-bottom: 22px;
+    }
+    .hero h1 {
+      margin: 0 0 8px;
+      font-size: 34px;
+    }
+    .hero p {
+      margin: 0;
+      color: rgba(255,255,255,.85);
+      font-size: 16px;
+    }
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 16px;
+      margin: 20px 0 26px;
+    }
+    .stat {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 18px;
+    }
+    .stat b {
+      display: block;
+      font-size: 28px;
+      margin-top: 10px;
+    }
+    .muted { color: var(--muted); }
+    .section {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      padding: 20px;
+      margin-bottom: 20px;
+      overflow: hidden;
+    }
+    .section h2 {
+      margin: 0 0 14px;
+      font-size: 24px;
+    }
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: white;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 900px;
+    }
+    th, td {
+      padding: 12px 14px;
+      border-bottom: 1px solid #eee4d2;
+      text-align: left;
+      vertical-align: top;
+      font-size: 14px;
+    }
+    th {
+      background: #fcf7ef;
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }
+    tr:hover td {
+      background: #fff8eb;
+    }
+    .badge {
+      display: inline-block;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: #fff1de;
+      color: #8b520e;
+      font-size: 12px;
+      border: 1px solid #f1d1a9;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="hero">
+      <h1>Ideal Bot Admin Panel</h1>
+      <p>Telegram botdan kelgan Firebase ma'lumotlari shu yerda ko'rinadi.</p>
+    </div>
+
+    <div class="stats">
+      <div class="stat">
+        <span class="muted">Jami arizalar</span>
+        <b>${leads.length}</b>
+      </div>
+      <div class="stat">
+        <span class="muted">Jami savollar</span>
+        <b>${comments.length}</b>
+      </div>
+      <div class="stat">
+        <span class="muted">Holat</span>
+        <b><span class="badge">Firebase ulangan</span></b>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>Ro'yxatdan o'tganlar</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>${leadFields.map((field) => `<th>${field.label}</th>`).join("")}</tr>
+          </thead>
+          <tbody>${renderTableRows(leads, leadFields)}</tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>Izoh va savollar</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>${commentFields.map((field) => `<th>${field.label}</th>`).join("")}</tr>
+          </thead>
+          <tbody>${renderTableRows(comments, commentFields)}</tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</body>
+</html>`;
+}
+
+function requireAdminAuth(req, res, next) {
+  if (!ADMIN_PANEL_PASSWORD) {
+    return next();
+  }
+
+  const authHeader = req.headers.authorization || "";
+  if (!authHeader.startsWith("Basic ")) {
+    res.setHeader("WWW-Authenticate", 'Basic realm="Admin Panel"');
+    return res.status(401).send("Admin login kerak");
+  }
+
+  const base64Credentials = authHeader.split(" ")[1] || "";
+  const credentials = Buffer.from(base64Credentials, "base64").toString("utf8");
+  const [, password = ""] = credentials.split(":");
+
+  if (password !== ADMIN_PANEL_PASSWORD) {
+    res.setHeader("WWW-Authenticate", 'Basic realm="Admin Panel"');
+    return res.status(401).send("Parol noto'g'ri");
+  }
+
+  return next();
+}
 
 bot.use(session());
 bot.use(stage.middleware());
@@ -319,6 +563,23 @@ async function startBot() {
 
   app.get("/", (_req, res) => {
     res.send("Bot is running...");
+  });
+
+  app.get("/admin", requireAdminAuth, async (_req, res) => {
+    try {
+      const [leadsSnapshot, commentsSnapshot] = await Promise.all([
+        db.collection("leads").orderBy("createdAt", "desc").limit(200).get(),
+        db.collection("comments").orderBy("createdAt", "desc").limit(200).get(),
+      ]);
+
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.send(
+        renderAdminPage(leadsSnapshot.docs, commentsSnapshot.docs),
+      );
+    } catch (error) {
+      console.error("Admin panel xatosi:", error);
+      res.status(500).send("Admin panelni yuklashda xatolik yuz berdi.");
+    }
   });
 
   console.log(`Service account manbasi: ${serviceAccount._source}`);
