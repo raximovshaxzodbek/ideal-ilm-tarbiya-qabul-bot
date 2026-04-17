@@ -5,9 +5,6 @@ const { JWT } = require('google-auth-library');
 const express = require('express'); // Expressni tepaga chiqaramiz
 const serviceAccount = require('./serviceAccountKey.json');
 
-// 0. PORTNI ANIQLASH (Eng muhimi)
-const PORT = process.env.PORT || 10000;
-
 // 1. Firebase ulanishi
 if (!admin.apps.length) {
     admin.initializeApp({
@@ -100,38 +97,42 @@ const commentScene = new Scenes.WizardScene('COMMENT_SCENE',
     }
 );
 
-// 3. BOT VA SERVERNI SOZLASH
 const bot = new Telegraf(serviceAccount.bot_token);
 const stage = new Scenes.Stage([contactScene, commentScene]);
 
 bot.use(session());
 bot.use(stage.middleware());
 
-// KOMANDALAR
+// Komandalar
 bot.command('start', (ctx) => ctx.scene.enter('REGISTRATION_SCENE'));
-bot.command('info', (ctx) => ctx.reply("📍 Manzil: O‘zbekiston tumani, Yakkatut MFY\n📞: 93-301-62-76"));
+bot.command('info', (ctx) => ctx.reply("📍 Manzil: Yakkatut MFY\n📞: 93-301-62-76"));
 bot.command('comment', (ctx) => ctx.scene.enter('COMMENT_SCENE'));
 
-// 4. WEBHOOK VA EXPRESS
+// Webhook va Express sozlamalari
 const app = express();
 app.use(express.json());
 
-const WEBHOOK_PATH = `/bot${serviceAccount.bot_token}`;
-const WEBHOOK_URL = `https://ideal-bot-qqbc.onrender.com${WEBHOOK_PATH}`;
+const PORT = process.env.PORT || 10000;
+const WEBHOOK_DOMAIN = 'https://ideal-bot-qqbc.onrender.com'; // Render'dagi manzilingiz
 
-bot.telegram.setWebhook(WEBHOOK_URL);
-
-app.post(WEBHOOK_PATH, (req, res) => {
+// Webhook-ni sozlash
+app.post('/bot', (req, res) => {
     bot.handleUpdate(req.body, res);
 });
 
 app.get('/', (req, res) => {
-    res.send('Bot Status: Online ✅');
+    res.send('Bot is running...');
 });
 
-// SERVERNI ISHGA TUSHIRISH
-app.listen(PORT, () => {
-    console.log(`Server is running on port ${PORT}`);
+app.listen(PORT, async () => {
+    console.log(`Server ${PORT}-portda ishlamoqda`);
+    try {
+        // Webhook-ni faqat server yongandan keyin o'rnatamiz
+        await bot.telegram.setWebhook(`${WEBHOOK_DOMAIN}/bot`);
+        console.log("✅ Webhook muvaffaqiyatli o'rnatildi");
+    } catch (e) {
+        console.error("❌ Webhook xatosi:", e);
+    }
 });
 
-// bot.launch() KERAK EMAS (Webhook ishlatilganda)
+// DIQQAT: bot.launch() buyrug'ini BU YERDAN O'CHIRING!
