@@ -44,37 +44,236 @@ async function saveToGoogleSheet(data) {
 
 const phoneRegex = /^\+?998[0-9]{9}$/;
 
-// --- SCENES (Sizning mavjud scenalaringiz o'zgarishsiz qoladi) ---
-const contactScene = new Scenes.WizardScene('REGISTRATION_SCENE', 
+
+
+// RO'YXATDAN O'TISH SCENASI
+
+const contactScene = new Scenes.WizardScene(
+
+    'REGISTRATION_SCENE',
+
+   
+
+    // 1-QADAM
+
     (ctx) => {
+
         ctx.reply("👋 Assalomu alaykum! Ism va familiyangizni kiriting:\n(Masalan: Alisherov Vali)\n\n🔄 Qayta boshlash uchun /start bosing.");
+
         ctx.wizard.state.formData = {};
+
         return ctx.wizard.next();
+
     },
+
+
+
+    // 2-QADAM
+
     (ctx) => {
-        if (ctx.message?.text === '/start') return ctx.scene.enter('REGISTRATION_SCENE');
+
+        if (ctx.message?.text === '/start') return ctx.scene.enter('REGISTRATION_SCENE'); // /start tekshiruvi
+
         if (!ctx.message || !ctx.message.text || ctx.message.text.length < 3) {
-            ctx.reply("❌ Iltimos, ismingizni to'g'ri kiriting.");
+
+            ctx.reply("❌ Iltimos, ismingizni to'g'ri harflar bilan kiriting.");
+
             return;
+
         }
+
         ctx.wizard.state.formData.ism = ctx.message.text;
-        ctx.reply("📞 Telefon raqamingizni yuboring:", Markup.keyboard([Markup.button.contactRequest("📱 Raqamni yuborish")]).oneTime().resize());
+
+
+
+        ctx.reply(
+
+            "📞 Iltimos, telefon raqamingizni yuboring.\nBuning uchun pastdagi «📱 Raqamni yuborish» tugmasini bosing yoki nomeringizni yozib qoldiring. \n Masalan: +998901234567",
+
+            Markup.keyboard([
+
+                Markup.button.contactRequest("📱 Raqamni yuborish")
+
+            ]).oneTime().resize()
+
+        );
+
         return ctx.wizard.next();
+
     },
-    // ... qolgan qadamlar sizning kodingizdagidek davom etadi ...
-    async (ctx) => { // Oxirgi qadam
+
+
+
+    // 3-QADAM
+
+    (ctx) => {
+
         if (ctx.message?.text === '/start') return ctx.scene.enter('REGISTRATION_SCENE');
+
+        let phone = "";
+
+        if (ctx.message && ctx.message.contact) {
+
+            phone = ctx.message.contact.phone_number;
+
+        } else if (ctx.message && ctx.message.text) {
+
+            const typedPhone = ctx.message.text.replace(/\s+/g, '');
+
+            if (phoneRegex.test(typedPhone)) phone = typedPhone;
+
+        }
+
+
+
+        if (!phone) {
+
+            ctx.reply("❌ Noto'g'ri format! Iltimos, pastdagi tugmani bosing yoki raqamni to'g'ri kiriting.\n Masalan: +998901234567");
+
+            return;
+
+        }
+
+
+
+        ctx.wizard.state.formData.phone = phone;
+
+        ctx.reply("📍 Yashash manzilingizni kiriting:\n(Masalan: Beshariq tumani, Hamid Olimjon ko'chasi)", Markup.removeKeyboard());
+
+        return ctx.wizard.next();
+
+    },
+
+
+
+    // 4-QADAM
+
+    (ctx) => {
+
+        if (ctx.message?.text === '/start') return ctx.scene.enter('REGISTRATION_SCENE');
+
+        if (!ctx.message || !ctx.message.text) {
+
+            ctx.reply("❌ Iltimos, manzilingizni yozing.");
+
+            return;
+
+        }
+
+        ctx.wizard.state.formData.manzil = ctx.message.text;
+
+
+
+        ctx.reply(
+
+            "📘 Qaysi fanni o'rganmoqchisiz?",
+
+            Markup.keyboard([
+
+                ["🧮 Matematika", "🇬🇧 Ingliz tili"],
+
+                ["💻 Informatika / IT", "🇷🇺 Rus tili"],
+
+                ["⚖️ Huquq", "Boshqa fan"]
+
+            ]).oneTime().resize()
+
+        );
+
+        return ctx.wizard.next();
+
+    },
+
+
+
+    // 5-QADAM
+
+    (ctx) => {
+
+        if (ctx.message?.text === '/start') return ctx.scene.enter('REGISTRATION_SCENE');
+
+        ctx.wizard.state.formData.qiziqish = ctx.message.text;
+
+        ctx.reply(
+
+            "🏫 Nechanchi sinfda o'qiysiz?",
+
+            Markup.keyboard([
+
+                ["1-sinf", "2-sinf", "3-sinf", "4-sinf"],
+
+                ["5-sinf", "6-sinf", "7-sinf", "8-sinf"],
+
+                ["9-sinf", "10-sinf", "11-sinf"],
+
+                ["Maktabni bitirganman"]
+
+            ]).oneTime().resize()
+
+        );
+
+        return ctx.wizard.next();
+
+    },
+
+
+
+    // 6-QADAM
+
+    (ctx) => {
+
+        if (ctx.message?.text === '/start') return ctx.scene.enter('REGISTRATION_SCENE');
+
+        ctx.wizard.state.formData.sinf = ctx.message.text;
+
+        ctx.reply(
+
+            "📢 Biz haqimizda qayerdan eshitdingiz?",
+
+            Markup.keyboard([["📱 Instagram", "✈️ Telegram"], ["🗣 Tanishlarimdan", "🏫 Maktab banneridan"]]).oneTime().resize()
+
+        );
+
+        return ctx.wizard.next();
+
+    },
+
+
+
+    // 7-QADAM
+
+    async (ctx) => {
+
+        if (ctx.message?.text === '/start') return ctx.scene.enter('REGISTRATION_SCENE');
+
         const data = ctx.wizard.state.formData;
+
         data.manba = ctx.message.text;
+
         data.chatId = ctx.chat.id;
+
         data.createdAt = admin.firestore.FieldValue.serverTimestamp();
+
+
+
         try {
+
             await db.collection('leads').add(data);
+
             await saveToGoogleSheet(data);
+
             ctx.reply("✅ Rahmat! Ma'lumotlaringiz qabul qilindi.", Markup.removeKeyboard());
-        } catch (err) { ctx.reply("❌ Xatolik yuz berdi."); }
+
+        } catch (err) {
+
+            ctx.reply("❌ Xatolik yuz berdi.");
+
+        }
+
         return ctx.scene.leave();
+
     }
+
 );
 
 const commentScene = new Scenes.WizardScene('COMMENT_SCENE',
