@@ -264,6 +264,7 @@ if (!BOT_TOKEN) {
 
 const bot = new Telegraf(BOT_TOKEN);
 const stage = new Scenes.Stage([contactScene, commentScene]);
+const app = express();
 
 bot.use(session());
 bot.use(stage.middleware());
@@ -279,16 +280,15 @@ bot.command("info", (ctx) =>
 bot.command("comment", (ctx) => ctx.scene.enter("COMMENT_SCENE"));
 
 async function startBot() {
-  if (WEBHOOK_DOMAIN) {
-    const app = express();
-    app.use(express.json());
+  app.use(express.json());
 
+  app.get("/", (_req, res) => {
+    res.send("Bot is running...");
+  });
+
+  if (WEBHOOK_DOMAIN) {
     app.post("/bot", (req, res) => {
       bot.handleUpdate(req.body, res);
-    });
-
-    app.get("/", (_req, res) => {
-      res.send("Bot is running...");
     });
 
     app.listen(PORT, async () => {
@@ -303,6 +303,14 @@ async function startBot() {
     return;
   }
 
+  await new Promise((resolve) => {
+    app.listen(PORT, () => {
+      console.log(`Server ${PORT}-portda ishlamoqda`);
+      resolve();
+    });
+  });
+
+  await bot.telegram.deleteWebhook({ drop_pending_updates: false });
   await bot.launch();
   console.log("Bot polling rejimida ishga tushdi");
 }
