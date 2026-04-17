@@ -19,11 +19,15 @@ const auth = new JWT({
   scopes: ["https://www.googleapis.com/auth/spreadsheets"],
 });
 
+async function getGoogleSheet() {
+  const doc = new GoogleSpreadsheet(serviceAccount.spreadsheet_id, auth);
+  await doc.loadInfo();
+  return doc.sheetsByIndex[0];
+}
+
 async function saveToGoogleSheet(data) {
   try {
-    const doc = new GoogleSpreadsheet(serviceAccount.spreadsheet_id, auth);
-    await doc.loadInfo();
-    const sheet = doc.sheetsByIndex[0];
+    const sheet = await getGoogleSheet();
 
     await sheet.addRow({
       ism: data.ism,
@@ -38,6 +42,7 @@ async function saveToGoogleSheet(data) {
     console.log("Google Sheets-ga yozildi");
   } catch (error) {
     console.error("Sheets xatosi:", error);
+    throw error;
   }
 }
 
@@ -285,6 +290,13 @@ async function startBot() {
   app.get("/", (_req, res) => {
     res.send("Bot is running...");
   });
+
+  try {
+    const sheet = await getGoogleSheet();
+    console.log(`Google Sheets ulandi: ${sheet.title}`);
+  } catch (error) {
+    console.error("Google Sheets ulanishida xatolik:", error);
+  }
 
   if (WEBHOOK_DOMAIN) {
     app.post("/bot", (req, res) => {
