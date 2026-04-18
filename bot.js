@@ -6,33 +6,78 @@ const express = require("express");
 const fs = require("fs");
 const path = require("path");
 
-function loadServiceAccount() {
-  if (process.env.SERVICE_ACCOUNT_JSON) {
-    try {
-      const parsed = JSON.parse(process.env.SERVICE_ACCOUNT_JSON);
-      if (parsed.private_key) {
-        parsed.private_key = parsed.private_key.replace(/\\n/g, "\n");
-      }
-      parsed._source = "env";
-      return parsed;
-    } catch (error) {
-      throw new Error(`SERVICE_ACCOUNT_JSON noto'g'ri JSON: ${error.message}`);
+loadDotEnv();
+
+function loadDotEnv() {
+  const envPath = path.join(__dirname, ".env");
+  if (!fs.existsSync(envPath)) {
+    return;
+  }
+
+  const content = fs.readFileSync(envPath, "utf8");
+  for (const rawLine of content.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) {
+      continue;
+    }
+
+    const separatorIndex = line.indexOf("=");
+    if (separatorIndex === -1) {
+      continue;
+    }
+
+    const key = line.slice(0, separatorIndex).trim();
+    let value = line.slice(separatorIndex + 1).trim();
+
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+
+    if (!(key in process.env)) {
+      process.env[key] = value;
+    }
+  }
+}
+
+function readRequiredEnv(name, fallbackNames = []) {
+  for (const key of [name, ...fallbackNames]) {
+    const value = process.env[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
     }
   }
 
-  const serviceAccountPath = path.join(__dirname, "serviceAccountKey.json");
-  if (!fs.existsSync(serviceAccountPath)) {
-    throw new Error(
-      "Service account topilmadi. SERVICE_ACCOUNT_JSON env yoki serviceAccountKey.json kerak.",
-    );
-  }
-
-  const parsed = require(serviceAccountPath);
-  parsed._source = "file";
-  return parsed;
+  throw new Error(`${name} env topilmadi.`);
 }
 
-const serviceAccount = loadServiceAccount();
+function loadServiceAccountFromEnv() {
+  return {
+    type: "service_account",
+    project_id: readRequiredEnv("FIREBASE_PROJECT_ID"),
+    private_key_id: process.env.FIREBASE_PRIVATE_KEY_ID?.trim(),
+    private_key: readRequiredEnv("FIREBASE_PRIVATE_KEY").replace(/\\n/g, "\n"),
+    client_email: readRequiredEnv("FIREBASE_CLIENT_EMAIL"),
+    client_id: process.env.FIREBASE_CLIENT_ID?.trim(),
+    auth_uri:
+      process.env.FIREBASE_AUTH_URI?.trim() ||
+      "https://accounts.google.com/o/oauth2/auth",
+    token_uri:
+      process.env.FIREBASE_TOKEN_URI?.trim() ||
+      "https://oauth2.googleapis.com/token",
+    auth_provider_x509_cert_url:
+      process.env.FIREBASE_AUTH_PROVIDER_CERT_URL?.trim() ||
+      "https://www.googleapis.com/oauth2/v1/certs",
+    client_x509_cert_url: process.env.FIREBASE_CLIENT_CERT_URL?.trim(),
+    universe_domain:
+      process.env.FIREBASE_UNIVERSE_DOMAIN?.trim() || "googleapis.com",
+    _source: ".env",
+  };
+}
+
+const serviceAccount = loadServiceAccountFromEnv();
 
 if (!admin.apps.length) {
   admin.initializeApp({
@@ -49,7 +94,8 @@ const auth = new JWT({
 });
 
 async function getGoogleSheet() {
-  const doc = new GoogleSpreadsheet(serviceAccount.spreadsheet_id, auth);
+  const spreadsheetId = readRequiredEnv("SPREADSHEET_ID", ["spreadsheet_id"]);
+  const doc = new GoogleSpreadsheet(spreadsheetId, auth);
   await doc.loadInfo();
   return doc.sheetsByIndex[0];
 }
@@ -289,15 +335,12 @@ const commentScene = new Scenes.WizardScene(
   },
 );
 
-const BOT_TOKEN = process.env.BOT_TOKEN || serviceAccount.bot_token;
+const BOT_TOKEN = readRequiredEnv("BOT_TOKEN", ["bot_token"]);
 const PORT = Number(process.env.PORT) || 10000;
 const WEBHOOK_DOMAIN = process.env.WEBHOOK_DOMAIN?.trim();
 const BOT_MODE = process.env.BOT_MODE?.trim().toLowerCase();
 const ADMIN_PANEL_PASSWORD = process.env.ADMIN_PANEL_PASSWORD?.trim();
-
-if (!BOT_TOKEN) {
-  throw new Error("Bot token topilmadi. BOT_TOKEN yoki serviceAccount.bot_token kerak.");
-}
+const IS_VERCEL = Boolean(process.env.VERCEL);
 
 const bot = new Telegraf(BOT_TOKEN);
 const stage = new Scenes.Stage([contactScene, commentScene]);
@@ -558,29 +601,43 @@ bot.command("info", (ctx) =>
 );
 bot.command("comment", (ctx) => ctx.scene.enter("COMMENT_SCENE"));
 
-async function startBot() {
-  app.use(express.json());
+app.use(express.json());
 
-  app.get("/", (_req, res) => {
-    res.send("Bot is running...");
-  });
+app.get("/", (_req, res) => {
+  const mode = IS_VERCEL ? "vercel-webhook" : "local";
+  res.send(`Bot ishlayapti. Rejim: ${mode}`);
+});
 
-  app.get("/admin", requireAdminAuth, async (_req, res) => {
-    try {
-      const [leadsSnapshot, commentsSnapshot] = await Promise.all([
-        db.collection("leads").orderBy("createdAt", "desc").limit(200).get(),
-        db.collection("comments").orderBy("createdAt", "desc").limit(200).get(),
-      ]);
+app.post("/bot", (req, res) => {
+  bot.handleUpdate(req.body, res);
+});
 
-      res.setHeader("Content-Type", "text/html; charset=utf-8");
-      res.send(
-        renderAdminPage(leadsSnapshot.docs, commentsSnapshot.docs),
-      );
-    } catch (error) {
-      console.error("Admin panel xatosi:", error);
-      res.status(500).send("Admin panelni yuklashda xatolik yuz berdi.");
-    }
-  });
+app.get("/admin", requireAdminAuth, async (_req, res) => {
+  try {
+    const [leadsSnapshot, commentsSnapshot] = await Promise.all([
+      db.collection("leads").orderBy("createdAt", "desc").limit(200).get(),
+      db.collection("comments").orderBy("createdAt", "desc").limit(200).get(),
+    ]);
+
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.send(
+      renderAdminPage(leadsSnapshot.docs, commentsSnapshot.docs),
+    );
+  } catch (error) {
+    console.error("Admin panel xatosi:", error);
+    res.status(500).send("Admin panelni yuklashda xatolik yuz berdi.");
+  }
+});
+
+let hasLoggedSheetStatus = false;
+
+async function logGoogleSheetStatusOnce() {
+  if (hasLoggedSheetStatus) {
+    return;
+  }
+  hasLoggedSheetStatus = true;
+
+  const useWebhook = BOT_MODE === "webhook" || Boolean(WEBHOOK_DOMAIN);
 
   console.log(`Service account manbasi: ${serviceAccount._source}`);
 
@@ -591,16 +648,22 @@ async function startBot() {
     console.error("Google Sheets ulanishida xatolik:", error);
   }
 
+  if (IS_VERCEL && !useWebhook) {
+    console.warn(
+      "Vercel serverless muhitida webhook ishlatish kerak. WEBHOOK_DOMAIN ni Vercel domeningizga sozlang.",
+    );
+  }
+}
+
+async function startBot() {
+  await logGoogleSheetStatusOnce();
+
   const useWebhook = BOT_MODE === "webhook" || Boolean(WEBHOOK_DOMAIN);
 
   if (useWebhook) {
     if (!WEBHOOK_DOMAIN) {
       throw new Error("BOT_MODE=webhook bo'lsa, WEBHOOK_DOMAIN ham kerak.");
     }
-
-    app.post("/bot", (req, res) => {
-      bot.handleUpdate(req.body, res);
-    });
 
     app.listen(PORT, async () => {
       console.log(`Server ${PORT}-portda ishlamoqda`);
@@ -626,15 +689,19 @@ async function startBot() {
   console.log("Bot polling rejimida ishga tushdi");
 }
 
-startBot().catch((error) => {
-  if (error?.response?.error_code === 409) {
-    console.error(
-      "409 conflict: bir xil bot token bilan boshqa joyda ham polling ishlayapti. Bitta instance qoldiring yoki Render'da webhook ishlating.",
-    );
-  }
-  console.error("Botni ishga tushirishda xatolik:", error);
-  process.exit(1);
-});
+if (!IS_VERCEL && require.main === module) {
+  startBot().catch((error) => {
+    if (error?.response?.error_code === 409) {
+      console.error(
+        "409 conflict: bir xil bot token bilan boshqa joyda ham polling ishlayapti. Bitta instance qoldiring yoki webhook ishlating.",
+      );
+    }
+    console.error("Botni ishga tushirishda xatolik:", error);
+    process.exit(1);
+  });
 
-process.once("SIGINT", () => bot.stop("SIGINT"));
-process.once("SIGTERM", () => bot.stop("SIGTERM"));
+  process.once("SIGINT", () => bot.stop("SIGINT"));
+  process.once("SIGTERM", () => bot.stop("SIGTERM"));
+}
+
+module.exports = app;
