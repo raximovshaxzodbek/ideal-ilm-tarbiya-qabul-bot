@@ -1,12 +1,10 @@
+require("dotenv").config();
+
 const { Telegraf, Scenes, session, Markup } = require("telegraf");
 const admin = require("firebase-admin");
 const { GoogleSpreadsheet } = require("google-spreadsheet");
 const { JWT } = require("google-auth-library");
 const express = require("express");
-const fs = require("fs");
-const path = require("path");
-
-loadDotEnv();
 
 let startupError = null;
 let adminReady = false;
@@ -17,40 +15,6 @@ let cachedDb = null;
 let cachedAuth = null;
 let cachedBot = null;
 let cachedStage = null;
-
-function loadDotEnv() {
-  const envPath = path.join(__dirname, ".env");
-  if (!fs.existsSync(envPath)) {
-    return;
-  }
-
-  const content = fs.readFileSync(envPath, "utf8");
-  for (const rawLine of content.split(/\r?\n/)) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith("#")) {
-      continue;
-    }
-
-    const separatorIndex = line.indexOf("=");
-    if (separatorIndex === -1) {
-      continue;
-    }
-
-    const key = line.slice(0, separatorIndex).trim();
-    let value = line.slice(separatorIndex + 1).trim();
-
-    if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
-      value = value.slice(1, -1);
-    }
-
-    if (!(key in process.env)) {
-      process.env[key] = value;
-    }
-  }
-}
 
 function readRequiredEnv(name, fallbackNames = []) {
   for (const key of [name, ...fallbackNames]) {
@@ -703,6 +667,24 @@ function getStartupError() {
   }
 }
 
+function shouldUseWebhook() {
+  if (WEBHOOK_DOMAIN) {
+    return true;
+  }
+
+  if (BOT_MODE === "webhook") {
+    if (IS_VERCEL) {
+      throw new Error("BOT_MODE=webhook bo'lsa, WEBHOOK_DOMAIN ham kerak.");
+    }
+
+    console.warn(
+      "WEBHOOK_DOMAIN topilmadi. Lokal rejimda polling ishlatiladi.",
+    );
+  }
+
+  return false;
+}
+
 function requireAdminAuth(req, res, next) {
   if (!ADMIN_PANEL_PASSWORD) {
     return next();
@@ -798,7 +780,7 @@ async function logGoogleSheetStatusOnce() {
     return;
   }
 
-  const useWebhook = BOT_MODE === "webhook" || Boolean(WEBHOOK_DOMAIN);
+  const useWebhook = shouldUseWebhook();
   const serviceAccount = getServiceAccount();
 
   console.log(`Service account manbasi: ${serviceAccount._source}`);
@@ -821,13 +803,9 @@ async function startBot() {
   await logGoogleSheetStatusOnce();
   const bot = getBot();
 
-  const useWebhook = BOT_MODE === "webhook" || Boolean(WEBHOOK_DOMAIN);
+  const useWebhook = shouldUseWebhook();
 
   if (useWebhook) {
-    if (!WEBHOOK_DOMAIN) {
-      throw new Error("BOT_MODE=webhook bo'lsa, WEBHOOK_DOMAIN ham kerak.");
-    }
-
     app.listen(PORT, async () => {
       console.log(`Server ${PORT}-portda ishlamoqda`);
       try {
@@ -858,6 +836,10 @@ if (!IS_VERCEL && require.main === module) {
       console.error(
         "409 conflict: bir xil bot token bilan boshqa joyda ham polling ishlayapti. Bitta instance qoldiring yoki webhook ishlating.",
       );
+      console.warn(
+        "Lokal server ishlashda davom etadi, lekin Telegram polling ulanmaydi.",
+      );
+      return;
     }
     console.error("Botni ishga tushirishda xatolik:", error);
     process.exit(1);
