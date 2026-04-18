@@ -8,6 +8,16 @@ const path = require("path");
 
 loadDotEnv();
 
+let startupError = null;
+let adminReady = false;
+let botReady = false;
+let sheetStatusLogged = false;
+let cachedServiceAccount = null;
+let cachedDb = null;
+let cachedAuth = null;
+let cachedBot = null;
+let cachedStage = null;
+
 function loadDotEnv() {
   const envPath = path.join(__dirname, ".env");
   if (!fs.existsSync(envPath)) {
@@ -77,25 +87,48 @@ function loadServiceAccountFromEnv() {
   };
 }
 
-const serviceAccount = loadServiceAccountFromEnv();
-
-if (!admin.apps.length) {
-  admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount),
-  });
+function getServiceAccount() {
+  if (!cachedServiceAccount) {
+    cachedServiceAccount = loadServiceAccountFromEnv();
+  }
+  return cachedServiceAccount;
 }
 
-const db = admin.firestore();
+function ensureAdmin() {
+  if (adminReady) {
+    return;
+  }
 
-const auth = new JWT({
-  email: serviceAccount.client_email,
-  key: serviceAccount.private_key,
-  scopes: ["https://www.googleapis.com/auth/spreadsheets"],
-});
+  const serviceAccount = getServiceAccount();
+
+  if (!admin.apps.length) {
+    admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount),
+    });
+  }
+
+  cachedDb = admin.firestore();
+  cachedAuth = new JWT({
+    email: serviceAccount.client_email,
+    key: serviceAccount.private_key,
+    scopes: ["https://www.googleapis.com/auth/spreadsheets"],
+  });
+  adminReady = true;
+}
+
+function getDb() {
+  ensureAdmin();
+  return cachedDb;
+}
+
+function getSheetAuth() {
+  ensureAdmin();
+  return cachedAuth;
+}
 
 async function getGoogleSheet() {
   const spreadsheetId = readRequiredEnv("SPREADSHEET_ID", ["spreadsheet_id"]);
-  const doc = new GoogleSpreadsheet(spreadsheetId, auth);
+  const doc = new GoogleSpreadsheet(spreadsheetId, getSheetAuth());
   await doc.loadInfo();
   return doc.sheetsByIndex[0];
 }
@@ -335,16 +368,41 @@ const commentScene = new Scenes.WizardScene(
   },
 );
 
-const BOT_TOKEN = readRequiredEnv("BOT_TOKEN", ["bot_token"]);
 const PORT = Number(process.env.PORT) || 10000;
 const WEBHOOK_DOMAIN = process.env.WEBHOOK_DOMAIN?.trim();
 const BOT_MODE = process.env.BOT_MODE?.trim().toLowerCase();
 const ADMIN_PANEL_PASSWORD = process.env.ADMIN_PANEL_PASSWORD?.trim();
 const IS_VERCEL = Boolean(process.env.VERCEL);
 
-const bot = new Telegraf(BOT_TOKEN);
-const stage = new Scenes.Stage([contactScene, commentScene]);
 const app = express();
+
+function ensureBot() {
+  if (botReady) {
+    return;
+  }
+
+  const botToken = readRequiredEnv("BOT_TOKEN", ["bot_token"]);
+  cachedBot = new Telegraf(botToken);
+  cachedStage = new Scenes.Stage([contactScene, commentScene]);
+
+  cachedBot.use(session());
+  cachedBot.use(cachedStage.middleware());
+  cachedBot.catch((error) => {
+    console.error("Bot xatosi:", error);
+  });
+  cachedBot.command("start", (ctx) => ctx.scene.enter("REGISTRATION_SCENE"));
+  cachedBot.command("info", (ctx) =>
+    ctx.reply("Manzil: Yakkatut MFY\nTelefon: 93-301-62-76"),
+  );
+  cachedBot.command("comment", (ctx) => ctx.scene.enter("COMMENT_SCENE"));
+
+  botReady = true;
+}
+
+function getBot() {
+  ensureBot();
+  return cachedBot;
+}
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -565,6 +623,86 @@ function renderAdminPage(leads, comments) {
 </html>`;
 }
 
+function renderErrorPage(title, error) {
+  const message = escapeHtml(error?.message || String(error || "Noma'lum xato"));
+  return `<!DOCTYPE html>
+<html lang="uz">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>${escapeHtml(title)}</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: "Trebuchet MS", Arial, sans-serif;
+      background: linear-gradient(180deg, #fdf7ef 0%, #f4ecdf 100%);
+      color: #24313a;
+    }
+    .wrap {
+      max-width: 860px;
+      margin: 48px auto;
+      padding: 24px;
+    }
+    .card {
+      background: #fffdf8;
+      border: 1px solid #e6d8c0;
+      border-radius: 20px;
+      padding: 24px;
+      box-shadow: 0 12px 30px rgba(36, 49, 58, 0.08);
+    }
+    h1 {
+      margin-top: 0;
+      font-size: 30px;
+    }
+    pre {
+      white-space: pre-wrap;
+      word-break: break-word;
+      background: #fff4e8;
+      border: 1px solid #efd4b2;
+      border-radius: 14px;
+      padding: 14px;
+      color: #8a4d08;
+    }
+    ul {
+      padding-left: 20px;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>${escapeHtml(title)}</h1>
+      <p>Server ishga tushdi, lekin konfiguratsiyada muammo bor.</p>
+      <pre>${message}</pre>
+      <p>Quyidagilarni tekshiring:</p>
+      <ul>
+        <li><code>BOT_TOKEN</code> to'g'ri kiritilganmi</li>
+        <li><code>FIREBASE_PRIVATE_KEY</code> bitta qatorda va <code>\\n</code> bilan saqlanganmi</li>
+        <li><code>FIREBASE_PROJECT_ID</code>, <code>FIREBASE_CLIENT_EMAIL</code>, <code>SPREADSHEET_ID</code> mavjudmi</li>
+        <li>Vercel deploy'dan keyin env o'zgargan bo'lsa, qayta deploy qilinganmi</li>
+      </ul>
+    </div>
+  </div>
+</body>
+</html>`;
+}
+
+function getStartupError() {
+  if (startupError) {
+    return startupError;
+  }
+
+  try {
+    ensureAdmin();
+    ensureBot();
+    return null;
+  } catch (error) {
+    startupError = error;
+    console.error("Startup xatosi:", error);
+    return startupError;
+  }
+}
+
 function requireAdminAuth(req, res, next) {
   if (!ADMIN_PANEL_PASSWORD) {
     return next();
@@ -588,35 +726,55 @@ function requireAdminAuth(req, res, next) {
   return next();
 }
 
-bot.use(session());
-bot.use(stage.middleware());
-
-bot.catch((error) => {
-  console.error("Bot xatosi:", error);
-});
-
-bot.command("start", (ctx) => ctx.scene.enter("REGISTRATION_SCENE"));
-bot.command("info", (ctx) =>
-  ctx.reply("Manzil: Yakkatut MFY\nTelefon: 93-301-62-76"),
-);
-bot.command("comment", (ctx) => ctx.scene.enter("COMMENT_SCENE"));
-
 app.use(express.json());
 
 app.get("/", (_req, res) => {
+  const error = getStartupError();
+  if (error) {
+    res.status(500).setHeader("Content-Type", "text/html; charset=utf-8");
+    res.send(renderErrorPage("Bot konfiguratsiyasida xato", error));
+    return;
+  }
+
   const mode = IS_VERCEL ? "vercel-webhook" : "local";
   res.send(`Bot ishlayapti. Rejim: ${mode}`);
 });
 
-app.post("/bot", (req, res) => {
-  bot.handleUpdate(req.body, res);
+app.post("/bot", async (req, res) => {
+  const error = getStartupError();
+  if (error) {
+    res.status(500).json({
+      ok: false,
+      error: error.message,
+    });
+    return;
+  }
+
+  try {
+    await getBot().handleUpdate(req.body, res);
+  } catch (botError) {
+    console.error("Webhook xatosi:", botError);
+    if (!res.headersSent) {
+      res.status(500).json({
+        ok: false,
+        error: botError.message,
+      });
+    }
+  }
 });
 
 app.get("/admin", requireAdminAuth, async (_req, res) => {
+  const error = getStartupError();
+  if (error) {
+    res.status(500).setHeader("Content-Type", "text/html; charset=utf-8");
+    res.send(renderErrorPage("Admin panel ochilmadi", error));
+    return;
+  }
+
   try {
     const [leadsSnapshot, commentsSnapshot] = await Promise.all([
-      db.collection("leads").orderBy("createdAt", "desc").limit(200).get(),
-      db.collection("comments").orderBy("createdAt", "desc").limit(200).get(),
+      getDb().collection("leads").orderBy("createdAt", "desc").limit(200).get(),
+      getDb().collection("comments").orderBy("createdAt", "desc").limit(200).get(),
     ]);
 
     res.setHeader("Content-Type", "text/html; charset=utf-8");
@@ -629,15 +787,19 @@ app.get("/admin", requireAdminAuth, async (_req, res) => {
   }
 });
 
-let hasLoggedSheetStatus = false;
-
 async function logGoogleSheetStatusOnce() {
-  if (hasLoggedSheetStatus) {
+  if (sheetStatusLogged) {
     return;
   }
-  hasLoggedSheetStatus = true;
+  sheetStatusLogged = true;
+
+  const error = getStartupError();
+  if (error) {
+    return;
+  }
 
   const useWebhook = BOT_MODE === "webhook" || Boolean(WEBHOOK_DOMAIN);
+  const serviceAccount = getServiceAccount();
 
   console.log(`Service account manbasi: ${serviceAccount._source}`);
 
@@ -657,6 +819,7 @@ async function logGoogleSheetStatusOnce() {
 
 async function startBot() {
   await logGoogleSheetStatusOnce();
+  const bot = getBot();
 
   const useWebhook = BOT_MODE === "webhook" || Boolean(WEBHOOK_DOMAIN);
 
